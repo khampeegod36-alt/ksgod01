@@ -1,3 +1,52 @@
+-- ================================================
+-- AUTO RE-EXECUTE AFTER TELEPORT / DUNGEON EXIT
+-- ================================================
+local DIGIMON_SCRIPT_URL = "https://raw.githubusercontent.com/khampeegod36-alt/ksgod01/main/DigimonEra.lua"
+
+local function setupTeleportQueue()
+    local q = queue_on_teleport or queueonteleport or queue_on_tp or queueontp
+    if not q then
+        warn("[Digimon Era] queue_on_teleport not found")
+        return false
+    end
+
+    local code = [[
+        task.wait(10)
+        local ok, err = pcall(function()
+            local src = game:HttpGet("https://raw.githubusercontent.com/khampeegod36-alt/ksgod01/main/DigimonEra.lua")
+            local fn = loadstring(src)
+            assert(fn, "loadstring failed")
+            fn()
+        end)
+        if not ok then
+            warn("[Digimon Era] Auto reload failed:", err)
+        end
+    ]]
+
+    local ok, err = pcall(function()
+        q(code)
+    end)
+
+    if not ok then
+        warn("[Digimon Era] Queue failed:", err)
+        return false
+    end
+
+    print("[Digimon Era] Teleport queue armed")
+    return true
+end
+
+setupTeleportQueue()
+
+-- Refresh the queue periodically while this client is alive.
+task.spawn(function()
+    while task.wait(15) do
+        setupTeleportQueue()
+    end
+end)
+
+-- ================================================
+
 local Players = game:GetService("Players")
 local PathfindingService = game:GetService("PathfindingService")
 local StarterGui = game:GetService("StarterGui")
@@ -238,236 +287,85 @@ sendNotification("Digimon Era Control", "โหลด UI สำเร็จแ�
 -- -------------------------------------------------
 -- 2. ระบบกดปุ่มป้อนอัตโนมัติ / ฟีดอาหารสัตว์เลี้ยง
 -- -------------------------------------------------
-local VirtualInputManager = game:GetService("VirtualInputManager")
-
--- หา Digimon ที่กำลังติดตามผู้เล่น
-local function findActiveDigimon(rootPart)
-	if not rootPart then
-		return nil
-	end
-
-	local digimonsFolder = workspace:FindFirstChild("Digimons")
-	local best = nil
-	local bestDistance = math.huge
-
-	-- ให้ความสำคัญกับ Model ที่อยู่ใน Digimons และไม่ใช่ Enemies
-	local containers = {}
-
-	if digimonsFolder then
-		table.insert(containers, digimonsFolder)
-
-		for _, child in ipairs(digimonsFolder:GetChildren()) do
-			if child.Name ~= "Enemies" then
-				table.insert(containers, child)
-			end
-		end
-	end
-
-	for _, container in ipairs(containers) do
-		for _, obj in ipairs(container:GetChildren()) do
-			if obj:IsA("Model") and obj.Parent then
-				local name = obj.Name:lower()
-
-				-- ไม่เอาศัตรู/กล่อง/ดรอป
-				local excluded =
-					name:find("enemy", 1, true)
-					or name:find("chest", 1, true)
-					or name:find("reward", 1, true)
-					or name:find("drop", 1, true)
-
-				if not excluded then
-					local ok, pos = pcall(function()
-						return obj:GetPivot().Position
-					end)
-
-					if ok and pos then
-						local dist =
-							(pos - rootPart.Position).Magnitude
-
-						-- Digimon ที่เป็นตัวติดตามมักอยู่ใกล้ผู้เล่น
-						if dist < bestDistance then
-							best = obj
-							bestDistance = dist
-						end
-					end
-				end
-			end
-		end
-	end
-
-	return best
-end
-
 local function triggerAutoFeed()
 	pcall(function()
-		local character = player.Character
-		local rootPart =
-			character
-			and character:FindFirstChild("HumanoidRootPart")
+		local pGui = player:FindFirstChild("PlayerGui")
+		if not pGui then return end
 
-		if not rootPart then
-			return
+		local clicked = {}
+		local keywords = {
+			"การป้อนอัตโนมัติ",
+			"ป้อนอัตโนมัติ",
+			"ฟีดอัตโนมัติ",
+			"ให้อาหาร",
+			"ป้อนอาหาร",
+			"auto feed",
+			"autofeed",
+			"feed"
+		}
+
+		local function containsKeyword(value)
+			value = tostring(value or ""):lower()
+			for _, keyword in ipairs(keywords) do
+				if value:find(keyword:lower(), 1, true) then
+					return true
+				end
+			end
+			return false
 		end
 
-		-- 1. หา Digimon ที่กำลังใช้งานอยู่
-		local digimon =
-			findActiveDigimon(rootPart)
+		local function findButtonFromGui(gui)
+			local current = gui
 
-		if digimon then
-			local digimonPos =
-				digimon:GetPivot().Position
+			for _ = 1, 6 do
+				if not current then break end
 
-			-- 2. วาปไปหา Digimon ก่อน
-			rootPart.CFrame =
-				CFrame.new(
-					digimonPos + Vector3.new(0, 2, 0)
-				)
+				if current:IsA("TextButton") or current:IsA("ImageButton") then
+					return current
+				end
 
-			task.wait(0.25)
+				current = current.Parent
+			end
 
-			sendNotification(
-				"Auto Feed",
-				"วาปไปหา " .. digimon.Name .. " แล้ว"
-			)
-		else
-			sendNotification(
-				"Auto Feed",
-				"ไม่พบ Digimon ที่กำลังใช้งาน"
-			)
-
-			return
+			return nil
 		end
 
-		-- 3. หาและกดปุ่ม "การป้อนอัตโนมัติ"
-		local pGui =
-			player:FindFirstChild("PlayerGui")
-
-		if not pGui then
-			return
-		end
-
-		local targetButton = nil
-
-		-- หา TextButton / ImageButton โดยตรง
+		-- หา TextLabel/TextButton ที่เกี่ยวกับการให้อาหาร
 		for _, gui in ipairs(pGui:GetDescendants()) do
-			if gui:IsA("TextButton")
-				or gui:IsA("ImageButton") then
+			local matched = false
 
-				local text = ""
+			if gui:IsA("TextLabel") or gui:IsA("TextButton") then
+				matched = containsKeyword(gui.Text)
+			end
 
-				pcall(function()
-					text = tostring(gui.Text or "")
-				end)
+			if not matched and (gui:IsA("TextButton") or gui:IsA("ImageButton")) then
+				matched = containsKeyword(gui.Name)
+			end
 
-				local name =
-					tostring(gui.Name or ""):lower()
+			if matched then
+				local btn = findButtonFromGui(gui)
 
-				if
-					text:find("การป้อนอัตโนมัติ", 1, true)
-					or text:find("ป้อนอัตโนมัติ", 1, true)
-					or text:lower():find("auto feed", 1, true)
-					or name:find("autofeed", 1, true)
-					or name:find("auto_feed", 1, true)
-				then
-					targetButton = gui
-					break
+				if btn and not clicked[btn] then
+					clicked[btn] = true
+
+					pcall(function()
+						-- วิธีหลัก: Activate ปุ่มโดยตรง
+						btn:Activate()
+					end)
+
+					pcall(function()
+						-- สำรองสำหรับ executor ที่รองรับ getconnections
+						if getconnections and btn:IsA("TextButton") then
+							for _, conn in ipairs(getconnections(btn.MouseButton1Click)) do
+								pcall(function()
+									conn:Fire()
+								end)
+							end
+						end
+					end)
 				end
 			end
 		end
-
-		-- ถ้าข้อความอยู่ใน TextLabel ให้หา Button แม่
-		if not targetButton then
-			for _, gui in ipairs(pGui:GetDescendants()) do
-				if gui:IsA("TextLabel") then
-
-					local text =
-						tostring(gui.Text or "")
-
-					if
-						text:find("การป้อนอัตโนมัติ", 1, true)
-						or text:find("ป้อนอัตโนมัติ", 1, true)
-					then
-
-						local parent =
-							gui.Parent
-
-						for _ = 1, 6 do
-							if not parent then
-								break
-							end
-
-							if
-								parent:IsA("TextButton")
-								or parent:IsA("ImageButton")
-							then
-								targetButton = parent
-								break
-							end
-
-							parent = parent.Parent
-						end
-
-						if targetButton then
-							break
-						end
-					end
-				end
-			end
-		end
-
-		if not targetButton then
-			sendNotification(
-				"Auto Feed",
-				"ไม่พบปุ่ม การป้อนอัตโนมัติ"
-			)
-
-			return
-		end
-
-		-- กดปุ่ม
-		pcall(function()
-			targetButton:Activate()
-		end)
-
-		-- จำลองการคลิกอีกครั้งเป็น fallback
-		pcall(function()
-			local pos =
-				targetButton.AbsolutePosition
-
-			local size =
-				targetButton.AbsoluteSize
-
-			local x =
-				pos.X + size.X / 2
-
-			local y =
-				pos.Y + size.Y / 2
-
-			VirtualInputManager:SendMouseButtonEvent(
-				x,
-				y,
-				0,
-				true,
-				game,
-				0
-			)
-
-			task.wait(0.05)
-
-			VirtualInputManager:SendMouseButtonEvent(
-				x,
-				y,
-				0,
-				false,
-				game,
-				0
-			)
-		end)
-
-		sendNotification(
-			"Auto Feed",
-			"กด การป้อนอัตโนมัติ แล้ว"
-		)
 	end)
 end
 
