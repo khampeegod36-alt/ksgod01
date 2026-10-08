@@ -1237,94 +1237,76 @@ end)
 -- ================================================
 -- AUTO HEAL
 -- ================================================
-
-local VirtualInputManager =
-    game:GetService(
-        "VirtualInputManager"
-    )
-
-
 local function triggerDigimonHeal()
 
-    pcall(function()
+    local pGui = player:FindFirstChild("PlayerGui")
+    if not pGui then
+        return false
+    end
 
-        VirtualInputManager:SendKeyEvent(
-            true,
-            Enum.KeyCode.Four,
-            false,
-            game
-        )
+    for _, obj in ipairs(pGui:GetDescendants()) do
 
-        task.wait(0.05)
+        if obj:IsA("TextButton")
+            or obj:IsA("ImageButton")
+        then
 
-        VirtualInputManager:SendKeyEvent(
-            false,
-            Enum.KeyCode.Four,
-            false,
-            game
-        )
+            local text = ""
 
-    end)
+            pcall(function()
+                text = tostring(obj.Text)
+            end)
 
+            if text == "4" then
+
+                local ok = pcall(function()
+                    obj:Activate()
+                end)
+
+                if ok then
+                    return true
+                end
+
+            end
+
+        end
+
+    end
+
+    return false
 end
 
 
 local function getDigimonHP()
 
-    local pGui =
-        player:FindFirstChild(
-            "PlayerGui"
-        )
+    local pGui = player:FindFirstChild("PlayerGui")
 
-    if pGui then
+    if not pGui then
+        return nil, nil
+    end
 
-        for _, gui in
-            ipairs(
-                pGui:GetDescendants()
-            )
-        do
+    for _, gui in ipairs(pGui:GetDescendants()) do
 
-            if
-                gui:IsA(
-                    "TextLabel"
-                )
-                and
-                gui.Visible
-                and
-                gui.Text ~= ""
-            then
+        if gui:IsA("TextLabel")
+            and gui.Visible
+            and gui.Text ~= ""
+        then
 
-                local text =
-                    gui.Text:gsub(
-                        ",",
-                        ""
-                    )
+            local text =
+                gui.Text:gsub(",", "")
 
-                local cur, max =
-                    text:match(
-                        "(%d+)%s*/%s*(%d+)"
-                    )
+            local cur, max =
+                text:match("(%d+)%s*/%s*(%d+)")
 
-                if cur and max then
+            if cur and max then
 
-                    local cVal =
-                        tonumber(cur)
+                local cVal = tonumber(cur)
+                local mVal = tonumber(max)
 
-                    local mVal =
-                        tonumber(max)
-
-                    if
-                        cVal
-                        and
-                        mVal
-                        and
-                        mVal > 100
-                    then
-
-                        return cVal, mVal
-
-                    end
-
+                if cVal
+                    and mVal
+                    and mVal > 100
+                then
+                    return cVal, mVal
                 end
 
             end
@@ -1334,7 +1316,6 @@ local function getDigimonHP()
     end
 
     return nil, nil
-
 end
 
 
@@ -1357,30 +1338,24 @@ task.spawn(function()
                     local missingHP =
                         maxHP - curHP
 
-                    if
-                        missingHP
-                        >=
-                        HEAL_DROP_AMOUNT
-                    then
+                    if missingHP >= HEAL_DROP_AMOUNT then
 
-                        if
-                            tick()
-                            - lastHealTime
-                            >= HEAL_COOLDOWN
-                        then
+                        if tick() - lastHealTime >= HEAL_COOLDOWN then
 
-                            triggerDigimonHeal()
+                            local used =
+                                triggerDigimonHeal()
 
-                            lastHealTime =
-                                tick()
+                            if used then
 
-                            sendNotification(
-                                "Auto Heal",
-                                "กดใช้ยาแล้ว! HP ลด "
-                                    .. math.floor(
-                                        missingHP
-                                    )
-                            )
+                                lastHealTime = tick()
+
+                                sendNotification(
+                                    "Auto Heal",
+                                    "กดปุ่มยา 4 แล้ว! HP ลด "
+                                        .. math.floor(missingHP)
+                                )
+
+                            end
 
                         end
 
