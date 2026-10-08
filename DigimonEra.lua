@@ -1237,9 +1237,48 @@ end)
 -- ================================================
 -- AUTO HEAL
 -- ================================================
-local function triggerDigimonHeal()
+local VirtualInputManager =
+    game:GetService("VirtualInputManager")
 
-    local pGui = player:FindFirstChild("PlayerGui")
+
+-- ========================================
+-- HEAL SYSTEM 1 : กดปุ่ม 4
+-- ========================================
+
+local function triggerHealKeyboard()
+
+    pcall(function()
+
+        VirtualInputManager:SendKeyEvent(
+            true,
+            Enum.KeyCode.Four,
+            false,
+            game
+        )
+
+        task.wait(0.08)
+
+        VirtualInputManager:SendKeyEvent(
+            false,
+            Enum.KeyCode.Four,
+            false,
+            game
+        )
+
+    end)
+
+end
+
+
+-- ========================================
+-- HEAL SYSTEM 2 : กดปุ่ม 4 บน UI
+-- ========================================
+
+local function triggerHealUI()
+
+    local pGui =
+        player:FindFirstChild("PlayerGui")
+
     if not pGui then
         return false
     end
@@ -1258,9 +1297,10 @@ local function triggerDigimonHeal()
 
             if text == "4" then
 
-                local ok = pcall(function()
-                    obj:Activate()
-                end)
+                local ok =
+                    pcall(function()
+                        obj:Activate()
+                    end)
 
                 if ok then
                     return true
@@ -1273,12 +1313,18 @@ local function triggerDigimonHeal()
     end
 
     return false
+
 end
 
 
+-- ========================================
+-- ตรวจ HP
+-- ========================================
+
 local function getDigimonHP()
 
-    local pGui = player:FindFirstChild("PlayerGui")
+    local pGui =
+        player:FindFirstChild("PlayerGui")
 
     if not pGui then
         return nil, nil
@@ -1295,7 +1341,9 @@ local function getDigimonHP()
                 gui.Text:gsub(",", "")
 
             local cur, max =
-                text:match("(%d+)%s*/%s*(%d+)")
+                text:match(
+                    "(%d+)%s*/%s*(%d+)"
+                )
 
             if cur and max then
 
@@ -1306,7 +1354,9 @@ local function getDigimonHP()
                     and mVal
                     and mVal > 100
                 then
+
                     return cVal, mVal
+
                 end
 
             end
@@ -1316,8 +1366,13 @@ local function getDigimonHP()
     end
 
     return nil, nil
+
 end
 
+
+-- ========================================
+-- AUTO HEAL
+-- ========================================
 
 task.spawn(function()
 
@@ -1342,20 +1397,21 @@ task.spawn(function()
 
                         if tick() - lastHealTime >= HEAL_COOLDOWN then
 
-                            local used =
-                                triggerDigimonHeal()
+                            -- ระบบที่ 1
+                            triggerHealKeyboard()
 
-                            if used then
+                            task.wait(0.15)
 
-                                lastHealTime = tick()
+                            -- ระบบที่ 2
+                            triggerHealUI()
 
-                                sendNotification(
-                                    "Auto Heal",
-                                    "กดปุ่มยา 4 แล้ว! HP ลด "
-                                        .. math.floor(missingHP)
-                                )
+                            lastHealTime = tick()
 
-                            end
+                            sendNotification(
+                                "Auto Heal",
+                                "ลองใช้ยาแล้ว | HP ลด "
+                                    .. math.floor(missingHP)
+                            )
 
                         end
 
@@ -1372,7 +1428,6 @@ task.spawn(function()
     end
 
 end)
-
 
 -- ================================================
 -- AUTO CHEST
