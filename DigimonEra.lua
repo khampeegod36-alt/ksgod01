@@ -1010,230 +1010,270 @@ sendNotification(
 
 
 -- ================================================
--- AUTO FEED
+-- AUTO FEED - TELEPORT + REPEAT SAME TARGET
+-- คง UI เดิม / วาร์ปหาเป้าหมาย / ให้อาหารซ้ำ
 -- ================================================
 
-local function triggerAutoFeed()
-
-    pcall(function()
-
-        local pGui =
-            player:FindFirstChild(
-                "PlayerGui"
-            )
-
-        if not pGui then
-            return
-        end
-
-        local clicked = {}
-
-        local keywords = {
-
-            "การป้อนอัตโนมัติ",
-            "ป้อนอัตโนมัติ",
-            "ฟีดอัตโนมัติ",
-            "ให้อาหาร",
-            "ป้อนอาหาร",
-            "auto feed",
-            "autofeed",
-            "feed"
-
-        }
-
-
-        local function containsKeyword(
-            value
-        )
-
-            value =
-                tostring(
-                    value or ""
-                ):lower()
-
-            for _, keyword in
-                ipairs(keywords)
-            do
-
-                if value:find(
-                    keyword:lower(),
-                    1,
-                    true
-                ) then
-
-                    return true
-
-                end
-
-            end
-
-            return false
-
-        end
-
-
-        local function findButtonFromGui(
-            gui
-        )
-
-            local current = gui
-
-            for _ = 1, 6 do
-
-                if not current then
-                    break
-                end
-
-                if
-                    current:IsA(
-                        "TextButton"
-                    )
-                    or
-                    current:IsA(
-                        "ImageButton"
-                    )
-                then
-
-                    return current
-
-                end
-
-                current =
-                    current.Parent
-
-            end
-
-            return nil
-
-        end
-
-
-        for _, gui in
-            ipairs(
-                pGui:GetDescendants()
-            )
-        do
-
-            local matched = false
-
-
-            if
-                gui:IsA(
-                    "TextLabel"
-                )
-                or
-                gui:IsA(
-                    "TextButton"
-                )
-            then
-
-                matched =
-                    containsKeyword(
-                        gui.Text
-                    )
-
-            end
-
-
-            if
-                not matched
-                and
-                (
-                    gui:IsA(
-                        "TextButton"
-                    )
-                    or
-                    gui:IsA(
-                        "ImageButton"
-                    )
-                )
-            then
-
-                matched =
-                    containsKeyword(
-                        gui.Name
-                    )
-
-            end
-
-
-            if matched then
-
-                local btn =
-                    findButtonFromGui(
-                        gui
-                    )
-
-                if
-                    btn
-                    and
-                    not clicked[btn]
-                then
-
-                    clicked[btn] = true
-
-
-                    pcall(function()
-
-                        btn:Activate()
-
-                    end)
-
-
-                    pcall(function()
-
-                        if
-                            getconnections
-                            and
-                            btn:IsA(
-                                "TextButton"
-                            )
-                        then
-
-                            for _, conn in
-                                ipairs(
-                                    getconnections(
-                                        btn.MouseButton1Click
-                                    )
-                                )
-                            do
-
-                                pcall(function()
-                                    conn:Fire()
-                                end)
-
-                            end
-
-                        end
-
-                    end)
-
-                end
-
-            end
-
-        end
-
-    end)
-
+local function getCaptureFolder()
+    return workspace:FindFirstChild("ClientCaptures")
 end
 
-
-task.spawn(function()
-
-    while true do
-
-        if AUTO_FEED then
-            triggerAutoFeed()
-        end
-
-        task.wait(2)
-
+local function getCapturePosition(capture)
+    if not capture or not capture.Parent then
+        return nil
     end
 
+    local ok, pos = pcall(function()
+        return capture:GetPivot().Position
+    end)
+
+    if ok then
+        return pos
+    end
+
+    return nil
+end
+
+local function findNearestCapture()
+    local folder = getCaptureFolder()
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    if not folder or not root then
+        return nil
+    end
+
+    local nearest, nearestDistance = nil, math.huge
+
+    for _, capture in ipairs(folder:GetChildren()) do
+        local info = capture:FindFirstChild("CatchableGui", true)
+        local nameLabel = info and info:FindFirstChild("DigimonName", true)
+        local pos = getCapturePosition(capture)
+
+        if nameLabel and pos then
+            local distance = (pos - root.Position).Magnitude
+
+            if distance < nearestDistance then
+                nearest = capture
+                nearestDistance = distance
+            end
+        end
+    end
+
+    return nearest
+end
+
+local function clickGuiButton(btn)
+    if not btn or not btn.Parent or not btn.Visible then
+        return false
+    end
+
+    local fired = false
+
+    pcall(function()
+        if getconnections then
+            for _, conn in ipairs(getconnections(btn.Activated)) do
+                if conn.Enabled ~= false then
+                    local ok = pcall(function()
+                        conn:Fire()
+                    end)
+
+                    if ok then
+                        fired = true
+                    end
+                end
+            end
+        end
+    end)
+
+    if not fired then
+        pcall(function()
+            if firesignal then
+                firesignal(btn.Activated)
+                fired = true
+            end
+        end)
+    end
+
+    return fired
+end
+
+-- วาร์ปไปใกล้เป้าหมาย โดยไม่วาร์ปซ้ำทุกเฟรม
+local function teleportToCapture(capture)
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local pos = getCapturePosition(capture)
+
+    if not root or not pos then
+        return false
+    end
+
+    if (root.Position - pos).Magnitude > 8 then
+        local ok = pcall(function()
+            root.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+        end)
+
+        if not ok then
+            return false
+        end
+
+        task.wait(0.25)
+    end
+
+    return true
+end
+
+-- พยายามเปิดหน้าต่างเป้าหมาย
+local function tryOpenCapture(capture)
+    if not capture or not capture.Parent then
+        return
+    end
+
+    pcall(function()
+        if fireproximityprompt then
+            for _, obj in ipairs(capture:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") then
+                    fireproximityprompt(obj)
+                end
+            end
+        end
+    end)
+
+    pcall(function()
+        local character = player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local part = capture:IsA("BasePart")
+            and capture
+            or capture:FindFirstChildWhichIsA("BasePart", true)
+
+        if root and part and firetouchinterest then
+            firetouchinterest(root, part, 0)
+            task.wait(0.03)
+            firetouchinterest(root, part, 1)
+        end
+    end)
+end
+
+local function getCaptureMain()
+    local pGui = player:FindFirstChild("PlayerGui")
+    local billboard = pGui and pGui:FindFirstChild("CaptureBillboard")
+    return billboard and billboard:FindFirstChild("MainFrame")
+end
+
+-- เลือกอาหารที่มีจำนวนเหลือ แล้วกด Feed
+local function feedOnce()
+    local main = getCaptureMain()
+
+    if not main or not main.Visible then
+        return false
+    end
+
+    local scrolling = main:FindFirstChild("ScrollingFrame", true)
+    local feedButton = main:FindFirstChild("FeedButton", true)
+
+    if not scrolling or not feedButton or not feedButton.Visible then
+        return false
+    end
+
+    local chosen = nil
+
+    for _, obj in ipairs(scrolling:GetDescendants()) do
+        if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+            local itemName = obj:FindFirstChild("ItemName", true)
+            local amountLabel = obj:FindFirstChild("ItemAmount", true)
+
+            local amount = amountLabel
+                and tonumber(tostring(amountLabel.Text):match("%d+"))
+
+            if itemName and amount and amount > 0 and obj.Visible then
+                chosen = obj
+                break
+            end
+        end
+    end
+
+    if not chosen then
+        return false
+    end
+
+    if not clickGuiButton(chosen) then
+        return false
+    end
+
+    task.wait(0.15)
+
+    if not AUTO_FEED then
+        return false
+    end
+
+    main = getCaptureMain()
+    feedButton = main and main:FindFirstChild("FeedButton", true)
+
+    if not main or not main.Visible or not feedButton or not feedButton.Visible then
+        return false
+    end
+
+    return clickGuiButton(feedButton)
+end
+
+task.spawn(function()
+    local currentTarget = nil
+    local lastFeedTime = 0
+    local lastOpenAttempt = 0
+
+    while screenGui.Parent do
+        if not AUTO_FEED then
+            currentTarget = nil
+            task.wait(0.2)
+            continue
+        end
+
+        -- ใช้เป้าหมายเดิมจนกว่าจะหายไป
+        if not currentTarget or not currentTarget.Parent then
+            currentTarget = findNearestCapture()
+            lastFeedTime = 0
+            lastOpenAttempt = 0
+        end
+
+        if not currentTarget or not currentTarget.Parent then
+            task.wait(0.3)
+            continue
+        end
+
+        -- ถ้าเป้าหมายหาย ให้ล้างเป้าหมายแล้วค้นหาตัวใหม่
+        if not getCapturePosition(currentTarget) then
+            currentTarget = nil
+            task.wait(0.1)
+            continue
+        end
+
+        local main = getCaptureMain()
+
+        if not main or not main.Visible then
+            teleportToCapture(currentTarget)
+
+            if os.clock() - lastOpenAttempt >= 0.7 then
+                lastOpenAttempt = os.clock()
+                tryOpenCapture(currentTarget)
+            end
+
+            task.wait(0.15)
+        else
+            -- ให้อาหารเป็นช่วง ๆ ไม่กดรัวทุกเฟรม
+            if os.clock() - lastFeedTime >= 0.5 then
+                lastFeedTime = os.clock()
+
+                local ok, result = pcall(feedOnce)
+
+                if not ok then
+                    warn("[Auto Feed]", result)
+                end
+            end
+
+            task.wait(0.1)
+        end
+    end
 end)
-
-
 -- ================================================
 -- AUTO HEAL
 -- ================================================
