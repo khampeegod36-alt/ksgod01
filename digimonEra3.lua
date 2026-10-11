@@ -14,7 +14,7 @@ local player = Players.LocalPlayer
 
 -- CONFIG
 local DIGIMON_SCRIPT_URL =
-    "https://raw.githubusercontent.com/khampeegod36-alt/ksgod01/main/DigimonEra.lua"
+    "https://raw.githubusercontent.com/khampeegod36-alt/ksgod01/main/DigimonEra3.lua"
 
 local UI_NAME = "DigimonEra_MultiUI"
 local MIN_DISTANCE = 30
