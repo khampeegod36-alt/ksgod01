@@ -10,6 +10,7 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local CoreGui = game:GetService("CoreGui")
 
+
 local player = Players.LocalPlayer
 
 -- CONFIG
@@ -21,6 +22,7 @@ local MIN_DISTANCE = 30
 local ARRIVAL_DISTANCE = 4
 local MAX_WALK_TIME = 10
 local SEARCH_RADIUS = 500
+
 local AUTO_FARM = false
 local AUTO_CHEST = false
 local AUTO_DROPS = false
