@@ -677,6 +677,7 @@ end
 -- AUTO EXPLORE
 -- ================================================
 
+
 local EXPLORE_CHECK_INTERVAL = 2
 local INVESTIGATE_COOLDOWN = 5
 local lastInvestigateTime = 0
@@ -684,17 +685,15 @@ local exploringNow = false
 
 local function getMapFrame()
     local pg = player:FindFirstChild("PlayerGui")
-    local mainFrameGui = pg and pg:FindFirstChild("Main")
-    return mainFrameGui and mainFrameGui:FindFirstChild("MapFrame")
+    local main = pg and pg:FindFirstChild("Main")
+    return main and main:FindFirstChild("MapFrame")
 end
 
 local function readExplorePercent(room)
     local label = room:FindFirstChild("ExploreDegree")
     if not label then return nil end
 
-    return tonumber(
-        tostring(label.Text):match("(%d+)%s*%%")
-    )
+    return tonumber(tostring(label.Text):match("(%d+)%s*%%"))
 end
 
 local function openMapForExplore()
@@ -702,16 +701,15 @@ local function openMapForExplore()
     local hud = pg and pg:FindFirstChild("HUD")
     local buttons = hud and hud:FindFirstChild("ButtonsFrame")
     local teleport = buttons and buttons:FindFirstChild("TeleportButton")
-    local button = teleport and teleport:FindFirstChild("ImageButton")
+    local imageButton = teleport and teleport:FindFirstChild("ImageButton")
     local mapFrame = getMapFrame()
 
     if not mapFrame then return false end
     if mapFrame.Visible then return true end
-    if not button then return false end
+    if not imageButton then return false end
 
-    if fireButton(button) then
-        task.wait(0.5)
-    end
+    fireButton(imageButton)
+    task.wait(0.5)
 
     return mapFrame.Visible
 end
@@ -720,41 +718,53 @@ local function findCurrentRoom(scrolling)
     for _, layer in ipairs(scrolling:GetChildren()) do
         if layer.Name:match("^Map%d+$") then
             for _, room in ipairs(layer:GetChildren()) do
-                if room.Name ~= "TempRoom" then
+                if room:IsA("TextButton")
+                    and room.Name:match("^Layer_%d+_SmallMap_%d+$") then
+
                     local degree = readExplorePercent(room)
                     local investigate = room:FindFirstChild("Investigate")
 
                     if degree ~= nil and investigate
                         and not investigate.Visible then
-                        return room, degree
+                        return room, layer, degree
                     end
                 end
             end
         end
     end
 
-    return nil, nil
+    return nil, nil, nil
 end
 
-local function findNextInvestigate(scrolling)
-    for _, layer in ipairs(scrolling:GetChildren()) do
-        if layer.Name:match("^Map%d+$") then
-            for _, room in ipairs(layer:GetChildren()) do
-                if room.Name ~= "TempRoom" then
-                    local button = room:FindFirstChild("Investigate")
-                    local degree = readExplorePercent(room)
+local function findNextRoom(currentLayer, currentRoom)
+    local rooms = {}
 
-                    if button and button.Visible
-                        and button.Active
-                        and degree ~= nil then
-                        return room, button
-                    end
-                end
+    for _, room in ipairs(currentLayer:GetChildren()) do
+        if room:IsA("TextButton")
+            and room.Name:match("^Layer_%d+_SmallMap_%d+$")
+            and room ~= currentRoom
+            and room.Visible
+            and room.Active then
+
+            local locked = room:FindFirstChild("LockedFrame")
+            if not (locked and locked.Visible) then
+                table.insert(rooms, room)
             end
         end
     end
 
-    return nil, nil
+    table.sort(rooms, function(a, b)
+        return a.Name < b.Name
+    end)
+
+    for _, room in ipairs(rooms) do
+        local degree = readExplorePercent(room)
+        if degree == nil or degree < 100 then
+            return room
+        end
+    end
+
+    return nil
 end
 
 task.spawn(function()
@@ -763,6 +773,10 @@ task.spawn(function()
             exploringNow = true
 
             local ok, err = pcall(function()
+                if tick() - lastInvestigateTime < INVESTIGATE_COOLDOWN then
+                    return
+                end
+
                 if not openMapForExplore() then return end
 
                 local mapFrame = getMapFrame()
@@ -771,24 +785,30 @@ task.spawn(function()
 
                 if not scrolling then return end
 
-                local currentRoom, percent = findCurrentRoom(scrolling)
+                local currentRoom, currentLayer, percent =
+                    findCurrentRoom(scrolling)
 
-                if currentRoom and percent and percent >= 100
-                    and tick() - lastInvestigateTime >= INVESTIGATE_COOLDOWN then
+                if not currentRoom or not percent or percent < 100 then
+                    return
+                end
 
-                    local nextRoom, button = findNextInvestigate(scrolling)
+                local nextRoom = findNextRoom(currentLayer, currentRoom)
 
-                    if nextRoom and button then
-                        sendNotification(
-                            "Auto Explore",
-                            "กำลังตรวจสอบห้องถัดไป"
-                        )
+                if nextRoom then
+                    sendNotification(
+                        "Auto Explore",
+                        "กำลังเข้าห้อง " .. nextRoom.Name
+                    )
 
-                        if fireButton(button) then
-                            lastInvestigateTime = tick()
-                            task.wait(1)
-                        end
+                    if fireButton(nextRoom) then
+                        lastInvestigateTime = tick()
+                        task.wait(2)
                     end
+                else
+                    print(
+                        "[Auto Explore] ไม่พบห้องถัดไปใน",
+                        currentLayer.Name
+                    )
                 end
             end)
 
@@ -802,7 +822,6 @@ task.spawn(function()
         task.wait(EXPLORE_CHECK_INTERVAL)
     end
 end)
-
 -- ================================================
 -- AUTO HEAL
 -- ================================================
