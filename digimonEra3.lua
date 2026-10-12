@@ -1,4 +1,3 @@
-
 -- ================================================
 -- DIGIMON ERA AUTO FARM + AUTO FEED + AUTO EXPLORE + DUNGEON LOOP
 -- SINGLE UI + TELEPORT QUEUE (FULL VERSION)
@@ -39,25 +38,27 @@ local visited = {}
 local openedChests = {}
 local collectedDrops = {}
 
-
--- SINGLE INSTANCE: CLEAR OLD UI BEFORE REBUILDING
-local function removeOldUI(parent)
-    if not parent then return end
-
-    local oldUI = parent:FindFirstChild(UI_NAME)
-    if oldUI then
-        oldUI:Destroy()
+-- SINGLE INSTANCE
+local function hasExistingUI()
+    local function exists(parent)
+        return parent and parent:FindFirstChild(UI_NAME) ~= nil
     end
+
+    if exists(CoreGui) then return true end
+
+    local pGui = player:FindFirstChild("PlayerGui")
+    if exists(pGui) then return true end
+
+    if gethui then
+        local ok, hui = pcall(gethui)
+        if ok and exists(hui) then return true end
+    end
+
+    return false
 end
 
-removeOldUI(CoreGui)
-removeOldUI(player:FindFirstChild("PlayerGui"))
-
-if type(gethui) == "function" then
-    local ok, hui = pcall(gethui)
-    if ok and hui then
-        removeOldUI(hui)
-    end
+if hasExistingUI() then
+    return
 end
 
 -- TELEPORT QUEUE
