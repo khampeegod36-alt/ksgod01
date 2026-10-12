@@ -393,7 +393,7 @@ sendNotification("Digimon Era Control", "โหลด UI สำเร็จแ�
 -- AUTO FARM MODES
 -- ================================================
 
-local function enableFarmModes()
+enableFarmModes = function()
     local pGui = player:WaitForChild("PlayerGui")
     local hud = pGui:WaitForChild("HUD")
 
@@ -679,9 +679,14 @@ end
 
 
 local EXPLORE_CHECK_INTERVAL = 2
-local INVESTIGATE_COOLDOWN = 5
-local lastInvestigateTime = 0
+local INVESTIGATE_COOLDOWN = 15
+-- หน่วงช่วงเริ่มต้น ไม่ให้เปิดแผนที่ทันทีที่รันสคริปต์
+local lastInvestigateTime = tick()
 local exploringNow = false
+
+-- รีเซ็ตคูลดาวน์เมื่อเปลี่ยน Place เช่น ออกจากดันแล้วเข้าไปดันรอบใหม่
+local EXPLORE_DUNGEON_PLACE_ID = 112998674138179
+local lastExplorePlaceId = game.PlaceId
 
 local function getMapFrame()
     local pg = player:FindFirstChild("PlayerGui")
@@ -714,6 +719,31 @@ local function openMapForExplore()
     return mapFrame.Visible
 end
 
+-- ปิดแผนที่หลังเลือกห้อง โดยใช้ปุ่มเดียวกับที่เปิดแผนที่
+local function closeMapForExplore()
+    local mapFrame = getMapFrame()
+    if not mapFrame or not mapFrame.Visible then return true end
+
+    local pg = player:FindFirstChild("PlayerGui")
+    local hud = pg and pg:FindFirstChild("HUD")
+    local buttons = hud and hud:FindFirstChild("ButtonsFrame")
+    local teleport = buttons and buttons:FindFirstChild("TeleportButton")
+    local imageButton = teleport and teleport:FindFirstChild("ImageButton")
+
+    if not imageButton then
+        warn("[Auto Explore] ไม่พบปุ่มปิดแผนที่")
+        return false
+    end
+
+    if not fireButton(imageButton) then
+        warn("[Auto Explore] กดปิดแผนที่ไม่สำเร็จ")
+        return false
+    end
+
+    task.wait(0.5)
+    return not mapFrame.Visible
+end
+
 local function findCurrentRoom(scrolling)
     for _, layer in ipairs(scrolling:GetChildren()) do
         if layer.Name:match("^Map%d+$") then
@@ -736,30 +766,130 @@ local function findCurrentRoom(scrolling)
     return nil, nil, nil
 end
 
-local function findNextRoom(currentLayer, currentRoom)
-    local rooms = {}
+-- ระบุห้องปัจจุบันจากแผนที่ เพื่อแยก visited ของแต่ละห้อง
+local function getCurrentRoomKey()
+    local mapFrame = getMapFrame()
+    local scrolling = mapFrame and mapFrame:FindFirstChild("ScrollingFrame")
+    if not scrolling then return nil end
 
-    for _, room in ipairs(currentLayer:GetChildren()) do
-        if room:IsA("TextButton")
-            and room.Name:match("^Layer_%d+_SmallMap_%d+$")
-            and room ~= currentRoom
-            and room.Visible
-            and room.Active then
+    local room, layer = findCurrentRoom(scrolling)
+    if room and layer then
+        return layer.Name .. "/" .. room.Name
+    end
+    return nil
+end
 
-            local locked = room:FindFirstChild("LockedFrame")
-            if not (locked and locked.Visible) then
-                table.insert(rooms, room)
+-- มีม่อนที่ยังมีชีวิตและ Pathfinding ไปถึงได้ในบริเวณนี้หรือไม่
+-- ม่อนเก่าที่อยู่อีกฝั่งกำแพงจะไม่ขวาง Auto Explore หากหาเส้นทางไม่พบ
+local function hasReachableLivingEnemy(maxDistance)
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local digimons = workspace:FindFirstChild("Digimons")
+    local enemies = digimons and digimons:FindFirstChild("Enemies")
+    if not root or not character or not enemies then return false end
+
+    for _, enemy in ipairs(enemies:GetChildren()) do
+        if enemy:IsA("Model") and enemy.Parent == enemies then
+            local enemyHumanoid = enemy:FindFirstChildOfClass("Humanoid")
+            if not enemyHumanoid or enemyHumanoid.Health > 0 then
+                local ok, enemyPos = pcall(function()
+                    return enemy:GetPivot().Position
+                end)
+                if ok and (enemyPos - root.Position).Magnitude <= maxDistance then
+                    local path = PathfindingService:CreatePath({
+                        AgentRadius = 2.5,
+                        AgentHeight = 5,
+                        AgentCanJump = true,
+                        WaypointSpacing = 4
+                    })
+                    local pathOk = pcall(function()
+                        path:ComputeAsync(root.Position, enemyPos)
+                    end)
+                    if pathOk and path.Status == Enum.PathStatus.Success then
+                        return true
+                    end
+                end
             end
         end
     end
+    return false
+end
 
-    table.sort(rooms, function(a, b)
-        return a.Name < b.Name
+local function findNextRoom(currentLayer, currentRoom, scrolling)
+    local function getAvailableRoom(layer, excludeRoom)
+        local rooms = {}
+
+        for _, room in ipairs(layer:GetChildren()) do
+            if room:IsA("TextButton")
+                and room.Name:match("^Layer_%d+_SmallMap_%d+$")
+                                and room ~= excludeRoom then
+                local locked = room:FindFirstChild("LockedFrame")
+                if not (locked and locked.Visible) then
+                    table.insert(rooms, room)
+                end
+            end
+        end
+
+        table.sort(rooms, function(a, b)
+            local aNum = tonumber(a.Name:match("SmallMap_(%d+)$")) or math.huge
+            local bNum = tonumber(b.Name:match("SmallMap_(%d+)$")) or math.huge
+            return aNum < bNum
+        end)
+
+        
+        for _, room in ipairs(rooms) do
+            local degree = readExplorePercent(room)
+            if degree == nil or degree < 100 then
+                return room
+            end
+        end
+
+        print("[Auto Explore] ตรวจห้องใน", layer.Name)
+
+        for _, room in ipairs(layer:GetChildren()) do
+            if room.Name:match("^Layer_%d+_SmallMap_%d+$") then
+                local degree = readExplorePercent(room)
+                local locked = room:FindFirstChild("LockedFrame")
+
+                print(
+                    "[Auto Explore] ห้อง:", room.Name,
+                    "Visible:", room.Visible,
+                    "Explore:", degree,
+                    "Locked:", locked and locked.Visible or false
+                )
+            end
+        end
+
+        return nil
+    end
+
+    -- ขั้นแรก: หาห้องที่ยังสำรวจไม่ครบใน Map ปัจจุบัน
+
+    -- ขั้นแรก: หาห้องที่ยังสำรวจไม่ครบใน Map ปัจจุบัน
+    local room = getAvailableRoom(currentLayer, currentRoom)
+    if room then return room end
+
+    -- ถ้า Map ปัจจุบันไม่มีห้องต่อ ให้ตรวจ Map ถัดไปตามลำดับ
+    -- ไม่ข้ามไป Map ก่อนหน้า และไม่เลือก Map ที่ไม่มีปุ่มห้องให้กดได้
+    local currentMapNumber = tonumber(currentLayer.Name:match("^Map(%d+)$"))
+    if not currentMapNumber or not scrolling then return nil end
+
+    local layers = {}
+    for _, layer in ipairs(scrolling:GetChildren()) do
+        local mapNumber = tonumber(layer.Name:match("^Map(%d+)$"))
+        if mapNumber and mapNumber > currentMapNumber then
+            table.insert(layers, {layer = layer, number = mapNumber})
+        end
+    end
+
+    table.sort(layers, function(a, b)
+        return a.number < b.number
     end)
 
-    for _, room in ipairs(rooms) do
-        local degree = readExplorePercent(room)
-        if degree == nil or degree < 100 then
+    for _, entry in ipairs(layers) do
+        room = getAvailableRoom(entry.layer, nil)
+        if room then
+            print("[Auto Explore] Map ปัจจุบันครบแล้ว กำลังเลือกห้องจาก", entry.layer.Name)
             return room
         end
     end
@@ -769,6 +899,15 @@ end
 
 task.spawn(function()
     while screenGui.Parent do
+        -- หากกลับเข้าดันเจี้ยนรอบใหม่ ให้เริ่มตรวจ Explore ได้ทันที
+        if game.PlaceId ~= lastExplorePlaceId then
+            lastExplorePlaceId = game.PlaceId
+            if game.PlaceId == EXPLORE_DUNGEON_PLACE_ID then
+                lastInvestigateTime = 0
+                print("[Auto Explore] ตรวจพบการเข้า Dungeon รอบใหม่ — รีเซ็ตคูลดาวน์")
+            end
+        end
+
         if AUTO_EXPLORE and not exploringNow then
             exploringNow = true
 
@@ -792,7 +931,12 @@ task.spawn(function()
                     return
                 end
 
-                local nextRoom = findNextRoom(currentLayer, currentRoom)
+                -- อย่าเปลี่ยนห้องขณะที่ยังมีม่อนที่เข้าถึงได้และมีชีวิตอยู่
+                if hasReachableLivingEnemy(120) then
+                    return
+                end
+
+                local nextRoom = findNextRoom(currentLayer, currentRoom, scrolling)
 
                 if nextRoom then
                     sendNotification(
@@ -802,12 +946,19 @@ task.spawn(function()
 
                     if fireButton(nextRoom) then
                         lastInvestigateTime = tick()
-                        task.wait(2)
+
+                        -- รอ 5 วินาทีหลังเลือกห้อง แล้วค่อยปิดแผนที่
+                        task.wait(5)
+                        closeMapForExplore()
+
+                        -- กันไม่ให้ลูปเปิดแผนที่ซ้ำทันทีหลังปิด
+                        lastInvestigateTime = tick()
                     end
                 else
                     print(
-                        "[Auto Explore] ไม่พบห้องถัดไปใน",
-                        currentLayer.Name
+                        "[Auto Explore] ไม่มีห้องถัดไปที่กดได้ใน",
+                        currentLayer.Name,
+                        "หรือ Map ถัดไป"
                     )
                 end
             end)
@@ -1109,43 +1260,46 @@ local function walkToTarget(character, humanoid, targetPosition)
     })
 
     local success = pcall(function()
-        path:ComputeAsync(
-            character:GetPivot().Position,
-            targetPosition
-        )
+        path:ComputeAsync(character:GetPivot().Position, targetPosition)
     end)
 
-    if success and path.Status == Enum.PathStatus.Success then
-        for _, waypoint in ipairs(path:GetWaypoints()) do
-            if not AUTO_FARM then break end
+    -- ถ้าหาเส้นทางไม่ได้ ห้าม MoveTo ตรง ๆ เพราะอาจวิ่งชนกำแพงไม่หยุด
+    if not success or path.Status ~= Enum.PathStatus.Success then
+        humanoid:MoveTo(character:GetPivot().Position)
+        return false
+    end
 
-            if waypoint.Action == Enum.PathWaypointAction.Jump then
-                humanoid.Jump = true
-            end
-
-            humanoid:MoveTo(waypoint.Position)
-
-            local finished = false
-            local conn = humanoid.MoveToFinished:Connect(function()
-                finished = true
-            end)
-
-            local started = tick()
-
-            while not finished and tick() - started < 1.2
-                and AUTO_FARM do
-                task.wait(0.05)
-            end
-
-            conn:Disconnect()
+    for _, waypoint in ipairs(path:GetWaypoints()) do
+        if not AUTO_FARM or not character.Parent or humanoid.Health <= 0 then
+            humanoid:MoveTo(character:GetPivot().Position)
+            return false
         end
-    else
-        if targetPosition.Y - character:GetPivot().Position.Y > 2 then
+
+        if waypoint.Action == Enum.PathWaypointAction.Jump then
             humanoid.Jump = true
         end
 
-        humanoid:MoveTo(targetPosition)
+        humanoid:MoveTo(waypoint.Position)
+
+        local finished, reached = false, false
+        local conn = humanoid.MoveToFinished:Connect(function(didReach)
+            finished = true
+            reached = didReach
+        end)
+
+        local started = tick()
+        while not finished and tick() - started < 1.2 and AUTO_FARM do
+            task.wait(0.05)
+        end
+        conn:Disconnect()
+
+        if not finished or not reached then
+            humanoid:MoveTo(character:GetPivot().Position)
+            return false
+        end
     end
+
+    return true
 end
 
 -- ================================================
@@ -1344,6 +1498,9 @@ end)
 -- ================================================
 
 task.spawn(function()
+    local lastRoomKey = nil
+    local lastEnemiesFolder = nil
+
     while screenGui.Parent do
         local character = player.Character
         local humanoid = character
@@ -1354,6 +1511,16 @@ task.spawn(function()
         -- ค้นหาโฟลเดอร์ศัตรูใหม่ทุกรอบเพื่อป้องกันกรณีฉากเปลี่ยน
         local digimons = workspace:FindFirstChild("Digimons")
         local enemiesFolder = digimons and digimons:FindFirstChild("Enemies")
+        local roomKey = getCurrentRoomKey()
+
+        -- ห้องหรือโฟลเดอร์ศัตรูเปลี่ยน: ล้างรายการเป้าหมายเก่า
+        if (roomKey and lastRoomKey and roomKey ~= lastRoomKey)
+            or (lastEnemiesFolder and enemiesFolder ~= lastEnemiesFolder) then
+            table.clear(visited)
+            sendNotification("Auto Farm", "ตรวจพบห้องใหม่ กำลังเลือกเป้าหมายใหม่")
+        end
+        if roomKey then lastRoomKey = roomKey end
+        lastEnemiesFolder = enemiesFolder
 
         if character and humanoid and rootPart and humanoid.Health > 0 then
             local handledFeed = false
@@ -1378,25 +1545,28 @@ task.spawn(function()
                 if not foundChest and not foundDrop
                     and AUTO_FARM and enemiesFolder then
 
-                    local target, targetDistance = nil, -1
+                    -- เลือกม่อนที่ใกล้ที่สุดก่อน ลดการวิ่งข้ามห้องไปหาเป้าหมายไกล
+                    local target, targetDistance = nil, math.huge
                     local myPos = rootPart.Position
 
                     for _, enemy in ipairs(enemiesFolder:GetChildren()) do
-                        if enemy:IsA("Model") and enemy.Parent
+                        if enemy:IsA("Model") and enemy.Parent == enemiesFolder
                             and not visited[enemy] then
 
                             local enemyHumanoid =
                                 enemy:FindFirstChildOfClass("Humanoid")
 
                             if not enemyHumanoid or enemyHumanoid.Health > 0 then
-                                local distance =
-                                    (enemy:GetPivot().Position - myPos).Magnitude
+                                local ok, enemyPos = pcall(function()
+                                    return enemy:GetPivot().Position
+                                end)
 
-                                if distance >= MIN_DISTANCE
-                                    and distance > targetDistance then
-
-                                    target = enemy
-                                    targetDistance = distance
+                                if ok then
+                                    local distance = (enemyPos - myPos).Magnitude
+                                    if distance < targetDistance then
+                                        target = enemy
+                                        targetDistance = distance
+                                    end
                                 end
                             end
                         end
@@ -1411,9 +1581,20 @@ task.spawn(function()
                         )
 
                         local started = tick()
+                        local targetRoomKey = roomKey
+                        local pathFailed = false
 
-                        while AUTO_FARM and target.Parent
+                        while AUTO_FARM and target.Parent == enemiesFolder
                             and tick() - started < MAX_WALK_TIME do
+
+                            -- ยกเลิกทันทีถ้าห้องเปลี่ยนหรือเป้าหมายไม่อยู่ในโฟลเดอร์ห้องนี้แล้ว
+                            local currentRoomKey = getCurrentRoomKey()
+                            if (targetRoomKey and currentRoomKey
+                                and currentRoomKey ~= targetRoomKey)
+                                or target.Parent ~= enemiesFolder then
+                                table.clear(visited)
+                                break
+                            end
 
                             local enemyHumanoid =
                                 target:FindFirstChildOfClass("Humanoid")
@@ -1422,19 +1603,31 @@ task.spawn(function()
                                 break
                             end
 
-                            local targetPos = target:GetPivot().Position
-                            local distance =
-                                (targetPos - rootPart.Position).Magnitude
+                            local ok, targetPos = pcall(function()
+                                return target:GetPivot().Position
+                            end)
+                            if not ok then break end
+
+                            local distance = (targetPos - rootPart.Position).Magnitude
 
                             if distance <= ARRIVAL_DISTANCE then
                                 pcall(function()
                                     VirtualUser:ClickButton1(Vector2.new())
                                 end)
-
                                 task.wait(0.2)
                             else
-                                walkToTarget(character, humanoid, targetPos)
+                                local reached = walkToTarget(character, humanoid, targetPos)
+                                if not reached then
+                                    pathFailed = true
+                                    break
+                                end
                             end
+                        end
+
+                        -- จำเป้าหมายที่ไปไม่ถึงไว้ เพื่อให้รอบถัดไปเลือกม่อนตัวอื่น
+                        if pathFailed then
+                            visited[target] = true
+                            sendNotification("Auto Farm", "ไปไม่ถึงเป้าหมาย ข้ามไปหาม่อนตัวอื่น")
                         end
                     elseif AUTO_FARM then
                         table.clear(visited)
