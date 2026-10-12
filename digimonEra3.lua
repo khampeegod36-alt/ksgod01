@@ -33,7 +33,7 @@ local AUTO_FEED_BUSY = false
 local AUTO_FEED_WORKER_RUNNING = false
 local AUTO_EXPLORE = false
 
-local HEAL_DROP_AMOUNT = 3000
+local HEAL_DROP_AMOUNT = 500
 
 local visited = {}
 local openedChests = {}
