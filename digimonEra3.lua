@@ -38,27 +38,25 @@ local visited = {}
 local openedChests = {}
 local collectedDrops = {}
 
--- SINGLE INSTANCE
-local function hasExistingUI()
-    local function exists(parent)
-        return parent and parent:FindFirstChild(UI_NAME) ~= nil
+
+-- SINGLE INSTANCE: CLEAR OLD UI BEFORE REBUILDING
+local function removeOldUI(parent)
+    if not parent then return end
+
+    local oldUI = parent:FindFirstChild(UI_NAME)
+    if oldUI then
+        oldUI:Destroy()
     end
-
-    if exists(CoreGui) then return true end
-
-    local pGui = player:FindFirstChild("PlayerGui")
-    if exists(pGui) then return true end
-
-    if gethui then
-        local ok, hui = pcall(gethui)
-        if ok and exists(hui) then return true end
-    end
-
-    return false
 end
 
-if hasExistingUI() then
-    return
+removeOldUI(CoreGui)
+removeOldUI(player:FindFirstChild("PlayerGui"))
+
+if type(gethui) == "function" then
+    local ok, hui = pcall(gethui)
+    if ok and hui then
+        removeOldUI(hui)
+    end
 end
 
 -- TELEPORT QUEUE
@@ -66,30 +64,58 @@ local function setupTeleportQueue()
     local q = queue_on_teleport or queueonteleport
         or queue_on_tp or queueontp
 
-    if not q then
-        warn("[Digimon Era] queue_on_teleport unavailable")
+    if type(q) ~= "function" then
+        warn("[Digimon Era] ไม่พบ queue_on_teleport")
         return
     end
 
     local code = [[
         task.wait(10)
+
+        local Players = game:GetService("Players")
         local CoreGui = game:GetService("CoreGui")
-        if CoreGui:FindFirstChild("DigimonEra_MultiUI") then
-            return
+        local player = Players.LocalPlayer
+        local UI_NAME = "DigimonEra_MultiUI"
+
+        local function hasUI(parent)
+            return parent ~= nil
+                and parent:FindFirstChild(UI_NAME) ~= nil
         end
-        pcall(function()
-            local src = game:HttpGet("]] .. DIGIMON_SCRIPT_URL .. [[", true)
-            local fn = loadstring(src)
-            if fn then fn() end
+
+        if hasUI(CoreGui) then return end
+
+        local pGui = player and player:FindFirstChild("PlayerGui")
+        if hasUI(pGui) then return end
+
+        if type(gethui) == "function" then
+            local ok, hui = pcall(gethui)
+            if ok and hasUI(hui) then return end
+        end
+
+        local ok, err = pcall(function()
+            local url = "https://raw.githubusercontent.com/khampeegod36-alt/ksgod01/refs/heads/main/digimonEra3.lua"
+            local src = game:HttpGet(url, true)
+            local fn, loadErr = loadstring(src)
+
+            if not fn then
+                error(loadErr or "โหลดสคริปต์ไม่สำเร็จ")
+            end
+
+            fn()
         end)
+
+        if not ok then
+            warn("[Digimon Era] Teleport load error:", err)
+        end
     ]]
 
-    pcall(q, code)
+    local ok, err = pcall(q, code)
+    if not ok then
+        warn("[Digimon Era] ตั้งคิว Teleport ไม่สำเร็จ:", err)
+    end
 end
 
--- ตั้งคิวใหม่ทุกครั้งที่สคริปต์เริ่มในเซิร์ฟเวอร์ใหม่
 setupTeleportQueue()
-
 -- ANTI AFK
 player.Idled:Connect(function()
     pcall(function()
