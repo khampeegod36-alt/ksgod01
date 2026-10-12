@@ -1,4 +1,4 @@
-```
+
 -- ================================================
 -- DIGIMON ERA AUTO FARM + AUTO FEED + AUTO EXPLORE + DUNGEON LOOP
 -- SINGLE UI + TELEPORT QUEUE (FULL VERSION)
