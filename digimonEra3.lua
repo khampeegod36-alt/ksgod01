@@ -1,3 +1,4 @@
+```
 -- ================================================
 -- DIGIMON ERA AUTO FARM + AUTO FEED + AUTO EXPLORE + DUNGEON LOOP
 -- SINGLE UI + TELEPORT QUEUE (FULL VERSION)
@@ -28,6 +29,8 @@ local AUTO_CHEST = false
 local AUTO_DROPS = false
 local AUTO_HEAL = false
 local AUTO_FEED = false
+local AUTO_FEED_BUSY = false
+local AUTO_FEED_WORKER_RUNNING = false
 local AUTO_EXPLORE = false
 
 local HEAL_DROP_AMOUNT = 3000
@@ -635,11 +638,8 @@ local function selectFoodAndFeed()
     return fireButton(feedButton)
 end
 
-local function processAutoFeed(rootPart)
-    if not AUTO_FEED or not rootPart then return false end
-
-    local capture = findNearestCapture(rootPart)
-    if not capture then return false end
+local function processAutoFeed(capture)
+    if not AUTO_FEED or not capture or not capture.Parent then return false end
 
     local targetName = getCaptureName(capture)
     sendNotification("Auto Feed", "กำลังไปหา " .. targetName)
@@ -1270,7 +1270,7 @@ local function walkToTarget(character, humanoid, targetPosition)
     end
 
     for _, waypoint in ipairs(path:GetWaypoints()) do
-        if not AUTO_FARM or not character.Parent or humanoid.Health <= 0 then
+        if not AUTO_FARM or AUTO_FEED_BUSY or not character.Parent or humanoid.Health <= 0 then
             humanoid:MoveTo(character:GetPivot().Position)
             return false
         end
@@ -1288,7 +1288,8 @@ local function walkToTarget(character, humanoid, targetPosition)
         end)
 
         local started = tick()
-        while not finished and tick() - started < 1.2 and AUTO_FARM do
+        while not finished and tick() - started < 1.2
+            and AUTO_FARM and not AUTO_FEED_BUSY do
             task.wait(0.05)
         end
         conn:Disconnect()
@@ -1523,18 +1524,26 @@ task.spawn(function()
         lastEnemiesFolder = enemiesFolder
 
         if character and humanoid and rootPart and humanoid.Health > 0 then
-            local handledFeed = false
-
-            if AUTO_FEED then
-                local ok, result = pcall(processAutoFeed, rootPart)
-                handledFeed = ok and result == true
-
-                if not ok then
-                    warn("[Auto Feed]", result)
+            -- Auto Feed ทำงานแยก thread เพื่อไม่บล็อกลูปหลักของ Auto Farm
+            -- ระหว่างวาร์ป/ให้อาหาร จะพักการเคลื่อนที่ชั่วคราว ป้องกันระบบแย่งตำแหน่งกัน
+            if AUTO_FEED and not AUTO_FEED_WORKER_RUNNING then
+                local capture = findNearestCapture(rootPart)
+                if capture then
+                    AUTO_FEED_WORKER_RUNNING = true
+                    AUTO_FEED_BUSY = true
+                    task.spawn(function()
+                        local ok, result = pcall(processAutoFeed, capture)
+                        if not ok then
+                            warn("[Auto Feed]", result)
+                        end
+                        AUTO_FEED_BUSY = false
+                        AUTO_FEED_WORKER_RUNNING = false
+                    end)
                 end
             end
 
-            if not handledFeed and not AUTO_FEED then
+            -- Farm / Chest / Drops กลับมาทำงานได้ทันทีเมื่อ Auto Feed เสร็จ
+            if not AUTO_FEED_BUSY then
                 local foundChest = findAndTeleportToChest(rootPart)
                 local foundDrop = false
 
@@ -1584,7 +1593,8 @@ task.spawn(function()
                         local targetRoomKey = roomKey
                         local pathFailed = false
 
-                        while AUTO_FARM and target.Parent == enemiesFolder
+                        while AUTO_FARM and not AUTO_FEED_BUSY
+                            and target.Parent == enemiesFolder
                             and tick() - started < MAX_WALK_TIME do
 
                             -- ยกเลิกทันทีถ้าห้องเปลี่ยนหรือเป้าหมายไม่อยู่ในโฟลเดอร์ห้องนี้แล้ว
